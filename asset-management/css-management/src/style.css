@@ -1,0 +1,14 @@
+:root{
+  --mian: red;
+  --white: #ffffff;
+}
+.hello {
+  display: flex;
+  justify-content: center;
+    color: blue;
+    color: var(--white);
+    background-color: var(--mian);
+}
+::placeholder {
+  color: gray;
+}

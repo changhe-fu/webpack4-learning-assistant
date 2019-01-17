@@ -1,0 +1,15 @@
+:root {
+  --mian: red;
+  --white: #ffff00;
+}
+.hello {
+  height: 400px;
+  display: flex;
+  justify-content: center;
+  color: blue;
+  color: var(--white);
+  background: url("./icon.jpg") var(--mian) no-repeat;
+}
+::placeholder {
+  color: gray;
+}
