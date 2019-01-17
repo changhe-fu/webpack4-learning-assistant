@@ -1,5 +1,5 @@
 [toc]
-# webpack4 study
+# learn webpack4 
 
 webpack 用于编译 JavaScript 模块。
 
