@@ -7,6 +7,8 @@ webpack 用于编译 JavaScript 模块。
 
 本文是学习 [webpack 4](https://www.webpackjs.com/) 所做的笔记，仍在完善当中~
 
+本文所有的代码都保存在 [github仓库中](https://github.com/heyi-let/webpack4-learning-assistant)。
+
 ## 安装
 
 webpack 的使用是基于 Node 和 NPM 的。
