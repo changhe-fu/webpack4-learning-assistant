@@ -1374,13 +1374,416 @@ npm install --save-dev webpack-hot-middleware
 完整 demo 可在 webpack-dev/dev-middleware/hot-middleware 文件夹查看。
 
 
+## 配置拆分
+
+本节我们沿用 **使用 webpack-dev-server** 这一小节的代码。
+
+到这里，我们已经成功使用 webpack 搭建了一个模块化项目的开发环境，如果我们再把生产环境也搭建好，就可以进入愉快的开发工作了，好开心。。。
+
+
+但是，开发环境（development）和生产环境（production）的构建目标差异很大！
+
+在开发环境中，我们需要具有强大的、具有实时重新加载（live reloading）或热模块替换（hot module replacement）能力的 source map 和 localhost server。
+
+而在生产环境中，我们的目标则转向于关注更小的 bundle，更轻量的 source map，以及更优化的资源，以改善加载时间。
+
+由于要遵循逻辑分离，我们通常建议**为每个环境编写彼此独立的 webpack 配置**。
+
+虽然，以上我们将生产环境和开发环境做了略微区分，但是，请注意，我们还是会遵循不重复原则（Don't repeat yourself - DRY），保留一个“通用”配置。
+
+
+为了将这些配置合并在一起，我们将使用一个名为 webpack-merge 的工具。通过“通用”配置，我们不必在环境特定(environment-specific)的配置中重复代码。
+
+安装：
+```
+npm install --save-dev webpack-merge
+```
+
+拆分配置文件：
+webpack-merge
+```
+  |- /node_modules
+  |- /src
+  |- .babelrc
+  |- package-lock.json
+  |- package.json
+- |- webpack.config.js
++ |- webpack.common.js
++ |- webpack.dev.js
++ |- webpack.prod.js
+```
+webpack.common.js 文件用于存放通用配置：
+```
+const path = require("path");
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const CleanWebpackPlugin = require('clean-webpack-plugin');
+
+module.exports = {
+  entry: {
+    app: "./src/index.js",
+    print: "./src/print.js"
+  },
+  output: {
+    filename: '[name].bundle.js',
+    path: path.resolve(__dirname, "dist")
+  },
+  plugins: [
+    new CleanWebpackPlugin(['dist']),
+    new HtmlWebpackPlugin({
+      title: 'Output Management'
+    }),
+  ],
+  module: { ···
+  }
+};
+```
+
+webpack.dev.js 文件用于存开发环境的配置：
+```
+const merge = require("webpack-merge");
+const common = require("./webpack.common.js");
+const webpack = require('webpack');
+
+module.exports = merge(common, {
+  devtool: "source-map",
+  devServer: {
+    contentBase: "./dist",
+    hot: true
+  },
+  plugins: [
+    new webpack.NamedModulesPlugin(),
+    new webpack.HotModuleReplacementPlugin()
+  ]
+});
+```
+
+webpack.prod.js 文件用于存生产环境的配置：
+```
+const merge = require('webpack-merge');
+const common = require('./webpack.common.js');
+
+module.exports = merge(common, {
+
+});
+```
+
+配置文件拆分后，更改 package.json 文件中的 `"script"` ：
+```
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+-   "build": "webpack --mode development",
+-   "start": "webpack-dev-server --open"
++   "build": "webpack --config webpack.prod.js",
++   "start": "webpack-dev-server --open --config webpack.dev.js"
+  },
+```
+
+接下来可以分别运行不同的脚本，查看效果！
+
+完整 demo 可在 webpack-merge 文件夹查看。
+
+## 搭建生产环境
+
+本节沿用上一节 **配置拆分** 的代码。
+
+在生产环境中，我们的目标是如何获得更小的 bundle，更轻量的 source map，以及更优化的资源，来改善加载时间。
+
+### tree shaking
+
+tree shaking 是一个术语，通常用于描述移除 JavaScript 上下文中的未引用代码(dead-code)。它依赖于 ES2015 模块系统中的静态结构特性，例如 import 和 export。
+
+在新的 webpack 4 正式版本，扩展了这个检测能力，通过 package.json 的 "sideEffects" 属性作为标记，向 compiler 提供提示，表明项目中的哪些文件是 "pure(纯的 ES2015 模块)"，由此可以安全地删除文件中未使用的部分。
+
+
+在 ~/src 文件夹下新建一个 math.js 文件：
+```
+export function square(x) {
+  return x * x;
+}
+
+export function cube(x) {
+  return x * x * x;
+}
+
+```
+在 ~/src/index.js 入口文件引入并使用 `cube()` 方法：
+```
+    import { component, imageComponent, iconComponent, dataComponent } from "./components/hello-world/index.js";
++   import { cube } from "./math.js";
+    
++   function mathComponent() {
++     var element = document.createElement("pre");
++   
++     element.innerHTML = ["Hello webpack!", "5 cubed is equal to " + cube(5)].join("\n\n");
++   
++     return element;
++   }
+    
+    // document.body.appendChild(component());
+    document.body.appendChild(imageComponent());
+    document.body.appendChild(iconComponent());
+    document.body.appendChild(dataComponent());
++   document.body.appendChild(mathComponent());
+    
+    let element = component();
+    document.body.appendChild(element);
+    
+    if (module.hot) {
+      module.hot.accept("./components/hello-world/index.js", function() {
+        console.log("Accepting the updated printMe module!");
+    
+        document.body.removeChild(element);
+        element = component();
+        document.body.appendChild(element);
+      });
+    }
+
+```
+
+现在如果执行构建 `npm run build` 命令，在打包出来的 bundle 文件中仍然会有 `square()` 方法，尽管并没有使用它。
+
+
+在 package.json 中添加副作用配置：
+```
+  "sideEffects": [
+    "*.css"
+  ],
+```
+
+
+
+安装插件：
+```
+npm install uglifyjs-webpack-plugin --save-dev
+```
+
+修改生产配置文件
+```
+const merge = require("webpack-merge");
+const common = require("./webpack.common.js");
+const UglifyJSPlugin = require("uglifyjs-webpack-plugin");
+
+module.exports = merge(common, {
+  plugins: [
+    new UglifyJSPlugin({
+      sourceMap: true
+    })
+  ]
+});
+```
+
+现在执行构建 `npm run build` 命令，在打包出来的 bundle 文件中就不会有 `square()` 方法。
+
+### 指定环境
+
+修改开发环境配置：
+```
+    const merge = require("webpack-merge");
+    const common = require("./webpack.common.js");
+    const webpack = require('webpack');
+    
+    module.exports = merge(common, {
+      devtool: "source-map",
+      devServer: {
+        contentBase: "./dist",
+        hot: true
+      },
+      plugins: [
++       new webpack.DefinePlugin({
++         "process.env.NODE_ENV": JSON.stringify("development")
++       }),
+        new webpack.NamedModulesPlugin(),
+        new webpack.HotModuleReplacementPlugin()
+      ]
+    });
+```
+
+修改生产配置文件：
+```
+    const merge = require("webpack-merge");
+    const common = require("./webpack.common.js");
+    const UglifyJSPlugin = require("uglifyjs-webpack-plugin");
+    const webpack = require("webpack");
+    
+    module.exports = merge(common, {
+      plugins: [
++       new UglifyJSPlugin({
++         sourceMap: true
++       }),
+        new webpack.DefinePlugin({
+          "process.env.NODE_ENV": JSON.stringify("production")
+        })
+      ]
+    });
+```
+
+### CSS 分离
+
+
+安装：
+```
+npm i -D extract-text-webpack-plugin@next
+```
+
+
+接下来把通用配置 CSS loader 配置移动到开发环境和生产环境：
+
+webpack.dev.js：
+```
+const merge = require("webpack-merge");
+const common = require("./webpack.common.js");
+const webpack = require("webpack");
+
+module.exports = merge(common, {
+  devtool: "source-map",
+  devServer: {
+    contentBase: "./dist",
+    hot: true
+  },
+  plugins: [
+    new webpack.DefinePlugin({
+      "process.env.NODE_ENV": JSON.stringify("development")
+    }),
+    new webpack.NamedModulesPlugin(),
+    new webpack.HotModuleReplacementPlugin()
+  ],
+  module: {
+    rules: [
+      {
+        test: /\.css$/,
+        exclude: /node_modules/,
+        use: [
+          "style-loader",
+          { loader: "css-loader", options: { modules: true, localIdentName: "[name]__[local]-[hash:base64:5]" } },
+          {
+            loader: "postcss-loader",
+            options: {
+              ident: "postcss",
+              plugins: [require("autoprefixer")(), require("postcss-preset-env")()]
+            }
+          }
+        ]
+      }
+    ]
+  }
+});
+
+```
+
+
+webpack.prod.js ：
+```
+const merge = require("webpack-merge");
+const common = require("./webpack.common.js");
+const UglifyJSPlugin = require("uglifyjs-webpack-plugin");
+const webpack = require("webpack");
+
+module.exports = merge(common, {
+  plugins: [
+    new UglifyJSPlugin({
+      sourceMap: true
+    }),
+    new webpack.DefinePlugin({
+      "process.env.NODE_ENV": JSON.stringify("production")
+    })
+  ],
+  module: {
+    rules: [
+      {
+        test: /\.css$/,
+        exclude: /node_modules/,
+        use: [
+          "style-loader",
+          { loader: "css-loader", options: { modules: true, localIdentName: "[name]__[local]-[hash:base64:5]" } },
+          {
+            loader: "postcss-loader",
+            options: {
+              ident: "postcss",
+              plugins: [require("autoprefixer")(), require("postcss-preset-env")()]
+            }
+          }
+        ]
+      }
+    ]
+  }
+});
+
+```
+
+在生产环境配置中，加入 extract-text-webpack-plugin 插件配置：
+```
+    const merge = require("webpack-merge");
+    const common = require("./webpack.common.js");
+    const UglifyJSPlugin = require("uglifyjs-webpack-plugin");
++   const ExtractTextPlugin = require("extract-text-webpack-plugin");
+    const webpack = require("webpack");
+    
+    module.exports = merge(common, {
+      plugins: [
+        new UglifyJSPlugin({
+          sourceMap: true
+        }),
+        new webpack.DefinePlugin({
+          "process.env.NODE_ENV": JSON.stringify("production")
+        }),
++       new ExtractTextPlugin({
++           filename: '[name].css',
++       })
+      ],
++     module: {
++       rules: [
++         {
++           test: /\.css$/,
++           exclude: /node_modules/,
++           use: ExtractTextPlugin.extract({
++             fallback: 'style-loader',
++             use:[
++               { loader: "css-loader", options: { modules: true, localIdentName: "[name]__[local]-[hash:base64:5]" } },
++               {
++                 loader: "postcss-loader",
++                 options: {
++                   ident: "postcss",
++                   plugins: [require("autoprefixer")(), require("postcss-preset-env")()]
++                 }
++               }
++             ]
++           })
++         }
++       ]
++     }
+    });
+
+```
+
+在这里遇到一个问题，假设我这样配置插件：
+```
+   new ExtractTextPlugin({
+       filename: 'css/[name].css',
+   })
+```
+在执行构建后，css 文件中引入的背景图地址会变成 `css/images/icon-745a8.jpg` ，导致背景图加载失败！
+
+所以最终这样配置：
+```
+   new ExtractTextPlugin({
+       filename: '[name].css',
+   })
+```
+
+
+完整 demo 可在 webpack-prod 文件夹查看。
+
+
 ## 优化
 
-到目前为止，已经完成了基础部分的学习~
-
-
+现在一个简单的开发环境和生产环境就配置好了，让我们进入优化环节吧~
 
 
 ## 学习资料
 
 https://www.webpackjs.com/guides/hot-module-replacement/
+
+https://webxiaoma.com/webpack/entry.html#%E5%8A%A8%E6%80%81%E5%85%A5%E5%8F%A3
+
+
+https://survivejs.com/webpack/developing/composing-configuration/
