@@ -1778,6 +1778,419 @@ module.exports = merge(common, {
 
 现在一个简单的开发环境和生产环境就配置好了，让我们进入优化环节吧~
 
+### 代码分离
+
+代码分离是 webpack 中最引人注目的特性之一。此特性能够把代码分离到不同的 bundle 中，然后可以按需加载或并行加载这些文件。代码分离可以用于获取更小的 bundle，以及控制资源加载优先级，如果使用合理，会极大影响加载时间。
+
+有三种常用的代码分离方法：
+
+- 入口起点：使用 entry 配置手动地分离代码。
+- 防止重复：使用 CommonsChunkPlugin 去重和分离 chunk。
+- 动态导入：通过模块的内联函数调用来分离代码。
+
+#### 入口起点
+
+这是迄今为止最简单、最直观的分离代码的方式。不过，这种方式手动配置较多，并有一些陷阱，我们将会解决这些问题。先来看看如何从 main bundle 中分离另一个模块：
+```
+webpack-demo
+|- package.json
+|- webpack.config.js
+|- /dist
+|- /src
+  |- index.js
++ |- another-module.js
+|- /node_modules
+```
+
+another-module.js
+```
+import _ from 'lodash';
+
+console.log(
+  _.join(['Another', 'module', 'loaded!'], ' ')
+);
+```
+
+webpack.config.js
+```
+const path = require('path');
+const HTMLWebpackPlugin = require('html-webpack-plugin');
+
+module.exports = {
+  entry: {
+    index: './src/index.js',
+    another: './src/another-module.js'
+  },
+  plugins: [
+    new HTMLWebpackPlugin({
+      title: 'Code Splitting'
+    })
+  ],
+  output: {
+    filename: '[name].bundle.js',
+    path: path.resolve(__dirname, 'dist')
+  }
+};
+```
+
+正如前面提到的，这种方法存在一些问题:
+
+- 如果入口 chunks 之间包含重复的模块，那些重复模块都会被引入到各个 bundle 中。
+- 这种方法不够灵活，并且不能将核心应用程序逻辑进行动态拆分代码。
+
+以上两点中，第一点对我们的示例来说无疑是个问题，因为之前我们在 ./src/index.js 中也引入过 lodash，这样就在两个 bundle 中造成重复引用。
+
+
+#### 提取公共代码
+
+
+
+SplitChunksPlugin 插件可以将公共的依赖模块提取到已有的入口 chunk 中，或者提取到一个新生成的 chunk。
+
+splitChunks 在 production 模式下自动开启。有一些默认配置，通过 `"optimization"` 配置参数详细说明：
+```
+const merge = require("webpack-merge");
+const common = require("./webpack.common.js");
+const UglifyJSPlugin = require("uglifyjs-webpack-plugin");
+const ExtractTextPlugin = require("extract-text-webpack-plugin");
+const webpack = require("webpack");
+
+module.exports = merge(common, {
+
+  ···
+  
+  optimization: {
+    runtimeChunk: {     // 自动拆分 runtime 文件
+      name: 'manifest'
+    },   
+    splitChunks:{
+      chunks: 'initial',        // initial(初始块)、async(按需加载块)、all(全部块)，默认为 async
+      minSize: 30000,           // 形成一个新代码块最小的体积（默认是30000）
+      minChunks: 1,             // 在分割之前，这个代码块最小应该被引用的次数（默认为 1 ）  
+      maxAsyncRequests: 5,      // 按需加载时候最大的并行请求数
+      maxInitialRequests: 3,    // 一个入口最大的并行请求数
+      name:"common",            // 打包的 chunks 的名字（字符串或者函数，函数可以根据条件自定义名字）
+      automaticNameDelimiter: '~',  // 打包分隔符
+      cacheGroups: {           // 这里开始设置缓存的 chunks
+        vendors: {             
+          name: 'vendors',
+          chunks: 'all',
+          priority: -10,        // 缓存组打包的先后优先级（只用于缓存组）
+          reuseExistingChunk: true, // 可设置是否重用该 chunk （只用于缓存组）
+          test:/[\\/]node_modules[\\/]/  // 只用于缓存组
+        },
+        components: {
+          test: /components\//,
+          name: "components",
+          chunks: 'initial',
+          enforce: true
+        }
+      }
+    }
+  },
+  
+  ···
+  
+});
+
+```
+
+**runtimeChunk** 的作用是将包含 chunks 映射关系的 list 单独从 app.js 里提取出来，因为每一个 chunk 的 id 基本都是基于内容 hash 出来的，所以你每次改动都会影响它，如果不将它提取出来的话，等于 app.js 每次都会改变。缓存就失效了。
+
+配置完成再执行构建。lodash 就被提取到 vendors.bundle.js 文件，在项目中只加载一次。
+
+完整 demo 可在 webpack-optimization/optimization-split 文件夹查看。
+
+#### 动态导入
+
+当涉及到动态代码拆分时，webpack 提供了两个类似的技术。对于动态导入，第一种，也是优先选择的方式是，使用符合 ECMAScript 提案 的 import() 语法。第二种，则是使用 webpack 特定的 require.ensure。让我们先尝试使用第一种……
+
+首先安装插件：
+```
+ npm install --save-dev @babel/plugin-syntax-dynamic-import
+```
+
+在 .babelrc 文件中添加配置：
+```
+    {
+        "presets": [
+          ["@babel/preset-env",
+            {
+              "useBuiltIns": "usage"
+            }
+          ]
+        ],
++       "plugins": ["@babel/plugin-syntax-dynamic-import"]
+    }
+```
+
+在通用配置 webpack.common.js 文件中添加配置：
+```
+const path = require("path");
+const HtmlWebpackPlugin = require("html-webpack-plugin");
+const CleanWebpackPlugin = require("clean-webpack-plugin");
+
+module.exports = {
+  entry: {
+    app: "./src/index.js",
+    print: "./src/print.js"
+  },
+  output: {
+    filename: "[name].bundle.js",
++   chunkFilename:'[name].bundle.js', // 非入口 chunk 的名称
+    path: path.resolve(__dirname, "dist")
+  },
+  plugins: [
+    new CleanWebpackPlugin(["dist"]),
+    new HtmlWebpackPlugin({
+      title: "Output Management"
+    })
+  ],
+  module: {
+    ···
+  }
+};
+
+```
+
+配置完成后就可在 asyncIndex.js 中尝试：
+```
+    // import _ from 'lodash';
+    
++   // 测试动态导入
++   async function getComponent() {
++     var element = document.createElement("div");
++     console.log("开始加载lodash");
++     const _ = await import(/* webpackChunkName: "lodash" */ "lodash");
++     console.log("lodash加载成功");
++     element.innerHTML = _.join(["Hello", "webpack"], " ");
++   
++     return element;
++   }
++   getComponent().then(component => {
++     document.body.appendChild(component);
++   });
+```
+
+#### 懒加载
+
+本节沿用上一节 **代码分离** 的代码
+
+懒加载或者按需加载，是一种很好的优化网页或应用的方式。这种方式实际上是先把你的代码在一些逻辑断点处分离开，然后在一些代码块中完成某些操作后，立即引用或即将引用另外一些新的代码块。这样加快了应用的初始加载速度，减轻了它的总体体积，因为某些代码块可能永远不会被加载。
+
+
+新建 print.js 文件：
+```
+console.log('The print.js module has loaded! See the network tab in dev tools...');
+
+export default () => {
+  console.log('Button Clicked: Here\'s "some text"!');
+}
+```
+
+然后在 index.js 文件中：
+```
+    import { component, imageComponent, iconComponent, dataComponent } from "./components/hello-world/index.js";
+    import { cube } from "./math.js";
+    import _ from "lodash";
+    
+    function mathComponent() {
+      var element = document.createElement("pre");
+    
+      // element.innerHTML = ["Hello webpack!", "5 cubed is equal to " + cube(5)].join("\n\n");
+      element.innerHTML = _.join(["Hello", "loadsh", cube(5)], " ");
+      return element;
+    }
+    
++   function buttonComponent() {
++     var element = document.createElement("div");
++     var button = document.createElement("button");
++     var br = document.createElement("br");
++     button.innerHTML = "Click me and look at the console!";
++     element.innerHTML = _.join(["Hello", "webpack"], " ");
++     element.appendChild(br);
++     element.appendChild(button);
+    
++     // Note that because a network request is involved, some indication
++     // of loading would need to be shown in a production-level site/app.
++     button.onclick = e =>
++       import(/* webpackChunkName: "print" */ "./print").then(module => {
++         var print = module.default;
+    
++         print();
++       });
+    
++     return element;
++   }
+    
+    document.body.appendChild(imageComponent());
+    document.body.appendChild(iconComponent());
+    document.body.appendChild(dataComponent());
+    document.body.appendChild(mathComponent());
++   document.body.appendChild(buttonComponent());
+    
+    // 只有 component() 模块才是热更行
+    let element = component(); 
+    document.body.appendChild(element);
+    
+    if (module.hot) {
+      module.hot.accept("./components/hello-world/index.js", function() {
+        console.log("Accepting the updated printMe module!");
+    
+        document.body.removeChild(element);
+        element = component();
+        document.body.appendChild(element);
+      });
+    }
+
+```
+
+
+运行项目，可以发现在单击按钮之后才加载文件 print.bundle.js 。
+
+完整 demo 可在 webpack-optimization/optimization-split 文件夹查看。
+
+### 缓存
+
+更改生产配置：
+```
+    const merge = require("webpack-merge");
+    const common = require("./webpack.common.js");
+    const UglifyJSPlugin = require("uglifyjs-webpack-plugin");
+    const ExtractTextPlugin = require("extract-text-webpack-plugin");
+    const webpack = require("webpack");
+    
+    module.exports = merge(common, {
++      output: {
++       filename: "[name].[chunkhash].js",
++       chunkFilename:'[name].[chunkhash].js', // 非入口 chunk 的名称
++     },
+      plugins: [
+        new UglifyJSPlugin({
+          sourceMap: true
+        }),
+        new webpack.DefinePlugin({
+          "process.env.NODE_ENV": JSON.stringify("production")
+        }),
+        new ExtractTextPlugin({
+          filename: "[name].css"
+        }),
++       new webpack.HashedModuleIdsPlugin()
+      ],
+      mode: "production",
+      optimization: {
+        splitChunks:{
+          chunks: 'initial',        // initial(初始块)、async(按需加载块)、all(全部块)，默认为async
+          minSize: 30000,           // 形成一个新代码块最小的体积（默认是30000）
+          minChunks: 1,             // 在分割之前，这个代码块最小应该被引用的次数（默认为 1 ）  
+          maxAsyncRequests: 5,      // 按需加载时候最大的并行请求数
+          maxInitialRequests: 3,    // 一个入口最大的并行请求数
+          name:"common",            // 打包的 chunks 的名字（字符串或者函数，函数可以根据条件自定义名字）
+          automaticNameDelimiter: '~',  // 打包分隔符
+          cacheGroups: {           // 这里开始设置缓存的 chunks
+            vendors: {             
+              name: 'vendors',
+              chunks: 'all',
+              priority: -10,        // 缓存组打包的先后优先级（只用于缓存组）
+              reuseExistingChunk: true, // 可设置是否重用该 chunk （只用于缓存组）
+              test:/[\\/]node_modules[\\/]/  // 只用于缓存组
+            },
+            components: {
+              test: /components\//,
+              name: "components",
+              chunks: 'initial',
+              enforce: true
+            }
+          }
+        },
++       runtimeChunk: {     // 自动拆分 runtime 文件
++         name: 'manifest'
++       }
+      },
+      module: {
+        rules: [
+          {
+            test: /\.css$/,
+            exclude: /node_modules/,
+            use: ExtractTextPlugin.extract({
+              fallback: "style-loader",
+              use: [
+                { loader: "css-loader", options: { modules: true, localIdentName: "[name]__[local]-[hash:base64:5]" } },
+                {
+                  loader: "postcss-loader",
+                  options: {
+                    ident: "postcss",
+                    plugins: [require("autoprefixer")(), require("postcss-preset-env")()]
+                  }
+                }
+              ]
+            })
+          }
+        ]
+      }
+    });
+
+```
+
+
+完整 demo 可在 webpack-optimization/optimization-cache 文件夹查看。
+
+### 配置别名
+
+在通用配置下：
+```
+  resolve: {
+    extensions: [".js", ".css", ".json"],
+    alias: {
+      asset: __dirname + "/src/asset"
+    } //配置别名可以加快webpack查找模块的速度
+  },
+```
+完整 demo 可在 webpack-optimization/optimization-cache 文件夹查看。
+### 拆分页面
+
+```
+const path = require("path");
+const HtmlWebpackPlugin = require("html-webpack-plugin");
+const CleanWebpackPlugin = require("clean-webpack-plugin");
+
+module.exports = {
+  entry: {
+    app: "./src/index.js",
+    es6Index: "./src/es6Index.js"
+  },
+  output: {
+    filename: "[name].bundle.js",
+    chunkFilename: "[name].bundle.js", // 非入口 chunk 的名称
+    path: path.resolve(__dirname, "dist")
+  },
+  resolve: {
+    extensions: [".js", ".css", ".json"],
+    alias: {
+      asset: __dirname + "/src/asset"
+    } //配置别名可以加快webpack查找模块的速度
+  },
+  plugins: [
+    new CleanWebpackPlugin(["dist"]),
+    new HtmlWebpackPlugin({
+      filename: "index.html",
+      hash: true,
+      chunks: ["app", "vendors", "commons", "manifest"]
+    }),
+    new HtmlWebpackPlugin({
+      filename: "es6Index.html",
+      hash: true,
+      chunks: ["es6Index", "vendors", "commons", "manifest"]
+    })
+  ],
+    
+  ···
+    
+};
+
+```
+
+完整 demo 可在 webpack-optimization/optimization-cache 文件夹查看。
 
 ## 学习资料
 
@@ -1785,5 +2198,8 @@ https://www.webpackjs.com/guides/hot-module-replacement/
 
 https://webxiaoma.com/webpack/entry.html#%E5%8A%A8%E6%80%81%E5%85%A5%E5%8F%A3
 
-
 https://survivejs.com/webpack/developing/composing-configuration/
+
+[一步一步的了解webpack4的splitChunk插件](https://www.colabug.com/2974919.html)
+
+[webpack4 新特性](https://lz5z.com/webpack4-new/)
